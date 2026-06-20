@@ -92,6 +92,7 @@ public class ClientGuiMain extends Application {
     private Scene createScene;
     private Scene joinScene;
     private Scene reconnectScene;
+    private Scene leaderboardScene;
     private Scene gameScene;
 
     // Connection UI Elements
@@ -158,6 +159,11 @@ public class ClientGuiMain extends Application {
     private String lastLoginPin;
     private int lastLoginRoomId;
     private int selectedPlayers = 2;
+    private int currentPlayerCount = 2;
+    private int selectedLeaderboardPlayers = 2;
+    private HBox leaderboardTabsBox;
+    private VBox leaderboardRowsBox;
+    private Label leaderboardStatusLabel;
     private final List<Button> playerCountButtons = new ArrayList<>();
     private final Map<String, Button> offerTileButtons = new HashMap<>();
     private final Map<String, String> placedTotemColorsByTile = new HashMap<>();
@@ -223,6 +229,7 @@ public class ClientGuiMain extends Application {
         buildConnectionScene();
         buildMainMenuScene();
         buildActionScenes();
+        buildLeaderboardScene();
         buildGameScene();
 
         switchScene(connectionScene);
@@ -518,7 +525,13 @@ public class ClientGuiMain extends Application {
         Button reconnectBtn = createMenuButton("RECONNECT", true);
         reconnectBtn.setOnAction(e -> switchScene(reconnectScene));
 
-        buttonBox.getChildren().addAll(createBtn, joinBtn, reconnectBtn);
+        Button leaderboardBtn = createMenuButton("LEADERBOARD", false);
+        leaderboardBtn.setOnAction(e -> {
+            switchScene(leaderboardScene);
+            requestLeaderboard(selectedLeaderboardPlayers);
+        });
+
+        buttonBox.getChildren().addAll(createBtn, joinBtn, reconnectBtn, leaderboardBtn);
 
         HBox footer = new HBox(60);
         footer.setAlignment(Pos.CENTER);
@@ -680,6 +693,113 @@ public class ClientGuiMain extends Application {
         layout.getChildren().addAll(logo, title, panel);
         root.getChildren().add(layout);
         return createResponsiveScene(root);
+    }
+
+    private void buildLeaderboardScene() {
+        StackPane root = createRootWithBackground();
+        Region shade = new Region();
+        shade.setStyle("-fx-background-color: radial-gradient(center 50% 42%, radius 80%, rgba(15,6,3,0.20), rgba(5,4,5,0.72));");
+        root.getChildren().add(shade);
+
+        VBox layout = new VBox(24);
+        layout.setAlignment(Pos.CENTER);
+        layout.setPadding(new Insets(44, 80, 44, 80));
+
+        Text logo = new Text("MESOS");
+        logo.setFont(Font.font(TITLE_FONT, FontWeight.NORMAL, 78));
+        logo.setFill(Color.web("#fff3d4"));
+        logo.setStyle("-fx-effect: dropshadow(gaussian, rgba(45,8,2,0.95), 8, 0.45, 0, 5);");
+
+        Text title = new Text("DATABASE LEADERBOARD");
+        title.setFont(Font.font(LABEL_FONT, FontWeight.BOLD, 34));
+        title.setFill(Color.web("#f4c762"));
+        title.setStyle("-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.8), 5, 0.5, 0, 2);");
+
+        leaderboardTabsBox = new HBox(16);
+        leaderboardTabsBox.setAlignment(Pos.CENTER);
+        for (int players : new int[]{2, 3, 4, 5}) {
+            Button tab = createLeaderboardTab(players);
+            leaderboardTabsBox.getChildren().add(tab);
+        }
+
+        VBox boardPanel = new VBox(16);
+        boardPanel.setAlignment(Pos.TOP_CENTER);
+        boardPanel.setPadding(new Insets(26, 34, 30, 34));
+        boardPanel.setMinWidth(760);
+        boardPanel.setPrefWidth(760);
+        boardPanel.setMaxWidth(760);
+        boardPanel.setMinHeight(470);
+        boardPanel.setStyle("-fx-background-color: linear-gradient(to bottom, rgba(63,29,12,0.96), rgba(24,10,4,0.98)); "
+                + "-fx-background-radius: 10; -fx-border-color: #a66a2b; -fx-border-width: 3; -fx-border-radius: 10; "
+                + "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.85), 18, 0, 0, 8);");
+
+        leaderboardStatusLabel = new Label("Choose a match size.");
+        leaderboardStatusLabel.setTextFill(Color.web("#f5d28a"));
+        leaderboardStatusLabel.setFont(Font.font(LABEL_FONT, FontWeight.BOLD, 18));
+        leaderboardStatusLabel.setWrapText(true);
+        leaderboardStatusLabel.setAlignment(Pos.CENTER);
+        leaderboardStatusLabel.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        leaderboardStatusLabel.setMinHeight(34);
+
+        leaderboardRowsBox = new VBox(8);
+        leaderboardRowsBox.setAlignment(Pos.TOP_CENTER);
+        leaderboardRowsBox.setFillWidth(true);
+
+        ScrollPane rowsScroll = new ScrollPane(leaderboardRowsBox);
+        rowsScroll.setFitToWidth(true);
+        rowsScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        rowsScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        rowsScroll.setPrefViewportHeight(360);
+        rowsScroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+
+        boardPanel.getChildren().addAll(leaderboardStatusLabel, rowsScroll);
+
+        HBox bottomBar = new HBox(24);
+        bottomBar.setAlignment(Pos.CENTER);
+        Button backBtn = createMenuButton("BACK", false);
+        backBtn.setMinWidth(220);
+        backBtn.setOnAction(e -> switchScene(mainMenuScene));
+        Button refreshBtn = createMenuButton("REFRESH", true);
+        refreshBtn.setMinWidth(220);
+        refreshBtn.setOnAction(e -> requestLeaderboard(selectedLeaderboardPlayers));
+        bottomBar.getChildren().addAll(backBtn, refreshBtn);
+
+        layout.getChildren().addAll(logo, title, leaderboardTabsBox, boardPanel, bottomBar);
+        root.getChildren().add(layout);
+        leaderboardScene = createResponsiveScene(root);
+        refreshLeaderboardTabs();
+    }
+
+    private Button createLeaderboardTab(int players) {
+        Button button = new Button(players + "P");
+        button.setMinSize(110, 54);
+        button.setMaxSize(110, 54);
+        button.setFont(Font.font(MENU_FONT, FontWeight.BOLD, 22));
+        button.setOnAction(e -> {
+            selectedLeaderboardPlayers = players;
+            refreshLeaderboardTabs();
+            requestLeaderboard(players);
+        });
+        return button;
+    }
+
+    private void refreshLeaderboardTabs() {
+        if (leaderboardTabsBox == null) {
+            return;
+        }
+        for (javafx.scene.Node node : leaderboardTabsBox.getChildren()) {
+            if (!(node instanceof Button)) {
+                continue;
+            }
+            Button button = (Button) node;
+            boolean selected = button.getText().equalsIgnoreCase(selectedLeaderboardPlayers + "P");
+            String base = selected ? "#c46a41" : "#2a1208";
+            String text = selected ? "#ffe0b2" : "#d99632";
+            button.setStyle("-fx-background-color: linear-gradient(to bottom, " + base + ", #1a0a04); "
+                    + "-fx-text-fill: " + text + "; -fx-background-radius: 8; "
+                    + "-fx-border-color: #a66a2b; -fx-border-width: " + (selected ? "3" : "2") + "; -fx-border-radius: 8; "
+                    + "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.75), 10, 0, 0, 4);");
+        }
     }
 
     /**
@@ -1046,7 +1166,7 @@ public class ClientGuiMain extends Application {
         bottomQuitBtn.setMinWidth(122);
         bottomQuitBtn.setMinHeight(38);
         bottomQuitBtn.setOnAction(e -> showInGameMenu());
-        
+
         playersSelectionBox = new HBox(8);
         playersSelectionBox.setAlignment(Pos.CENTER_RIGHT);
         for (int players : new int[]{2, 3, 4, 5}) {
@@ -1198,6 +1318,7 @@ public class ClientGuiMain extends Application {
 
         button.setOnAction(e -> {
             selectedPlayers = players;
+            currentPlayerCount = players;
             refreshPlayerCountSelection();
         });
         return button;
@@ -1598,6 +1719,9 @@ public class ClientGuiMain extends Application {
         lastLoginNickname = nickname;
         lastLoginPin = pin;
         lastLoginRoomId = roomId;
+        if (maxPlayers >= 2 && maxPlayers <= 5) {
+            currentPlayerCount = maxPlayers;
+        }
 
         connectionExecutor.submit(() -> {
             try {
@@ -1684,6 +1808,128 @@ public class ClientGuiMain extends Application {
         }
     }
 
+    private void requestLeaderboard(int playerCount) {
+        selectedLeaderboardPlayers = playerCount;
+        currentPlayerCount = playerCount;
+        refreshLeaderboardTabs();
+        setLeaderboardStatus("Loading " + playerCount + "P leaderboard...");
+        clearLeaderboardRows();
+
+        ConnectionContext context = activeConnection.get();
+        if (context == null || !context.isConnected()) {
+            setLeaderboardStatus("Connect to the server before viewing the leaderboard.");
+            return;
+        }
+
+        if (context instanceof RmiConnectionContext) {
+            RmiConnectionContext rmiContext = (RmiConnectionContext) context;
+            connectionExecutor.submit(() -> {
+                try {
+                    SerializedUpdate response = rmiContext.service.getLeaderboard(playerCount);
+                    Platform.runLater(() -> renderLeaderboardResult(
+                            response == null ? "No response from server." : response.getContent()));
+                } catch (Exception e) {
+                    Platform.runLater(() -> setLeaderboardStatus("Leaderboard request failed: " + e.getMessage()));
+                }
+            });
+            return;
+        }
+
+        try {
+            context.send(new ActionMessage("LEADERBOARD", "", playerCount));
+        } catch (IOException e) {
+            setLeaderboardStatus("Leaderboard request failed: " + e.getMessage());
+        }
+    }
+
+    private void renderLeaderboardResult(String content) {
+        String visible = stripImageMetadata(content == null ? "" : content).trim();
+        clearLeaderboardRows();
+        if (visible.isEmpty()) {
+            setLeaderboardStatus("No leaderboard data received.");
+            return;
+        }
+        if (visible.startsWith("No leaderboard entries")) {
+            setLeaderboardStatus(visible);
+            return;
+        }
+        if (!visible.startsWith("Leaderboard for ")) {
+            setLeaderboardStatus(visible);
+            return;
+        }
+
+        String[] lines = visible.split("\\R");
+        setLeaderboardStatus(lines[0]);
+        for (int i = 1; i < lines.length; i++) {
+            addLeaderboardRow(lines[i]);
+        }
+        if (leaderboardRowsBox.getChildren().isEmpty()) {
+            setLeaderboardStatus(lines[0] + "\nNo ranked players yet.");
+        }
+    }
+
+    private void setLeaderboardStatus(String message) {
+        if (leaderboardStatusLabel != null) {
+            leaderboardStatusLabel.setText(message == null ? "" : message);
+        }
+    }
+
+    private void clearLeaderboardRows() {
+        if (leaderboardRowsBox != null) {
+            leaderboardRowsBox.getChildren().clear();
+        }
+    }
+
+    private void addLeaderboardRow(String line) {
+        if (leaderboardRowsBox == null || line == null || line.isBlank()) {
+            return;
+        }
+
+        String trimmed = line.trim();
+        String rank = "";
+        String rest = trimmed;
+        if (trimmed.startsWith("#")) {
+            int space = trimmed.indexOf(' ');
+            if (space > 0) {
+                rank = trimmed.substring(0, space);
+                rest = trimmed.substring(space + 1).trim();
+            }
+        }
+
+        String player = rest;
+        String score = "";
+        int scoreIdx = rest.indexOf(" pp=");
+        if (scoreIdx >= 0) {
+            player = rest.substring(0, scoreIdx).trim();
+            score = rest.substring(scoreIdx + 1).trim();
+        }
+
+        Label rankLabel = new Label(rank);
+        rankLabel.setTextFill(Color.web("#f4c762"));
+        rankLabel.setFont(Font.font(MENU_FONT, FontWeight.BOLD, 22));
+        rankLabel.setMinWidth(80);
+
+        Label playerLabel = new Label(player);
+        playerLabel.setTextFill(Color.web("#fff0c2"));
+        playerLabel.setFont(Font.font(LABEL_FONT, FontWeight.BOLD, 18));
+        playerLabel.setMaxWidth(Double.MAX_VALUE);
+
+        Label scoreLabel = new Label(score);
+        scoreLabel.setTextFill(Color.web("#e0a94f"));
+        scoreLabel.setFont(Font.font(LABEL_FONT, FontWeight.BOLD, 16));
+        scoreLabel.setMinWidth(230);
+        scoreLabel.setAlignment(Pos.CENTER_RIGHT);
+
+        HBox row = new HBox(18, rankLabel, playerLabel, scoreLabel);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setPadding(new Insets(12, 18, 12, 18));
+        row.setMinHeight(54);
+        row.setStyle("-fx-background-color: rgba(15,7,3,0.58); -fx-background-radius: 7; "
+                + "-fx-border-color: rgba(166,106,43,0.45); -fx-border-width: 1; -fx-border-radius: 7;");
+        HBox.setHgrow(playerLabel, Priority.ALWAYS);
+        leaderboardRowsBox.getChildren().add(row);
+    }
+
     /** Leaves the current room view and restores the gateway menu. */
     private void returnToGatewayMenuFromRoom() {
         sendAction("unready");
@@ -1704,7 +1950,9 @@ public class ClientGuiMain extends Application {
         if (msg == null) return;
         String visibleMessage = stripImageMetadata(msg);
         Platform.runLater(() -> {
-            logArea.appendText(visibleMessage + "\n");
+            if (logArea != null) {
+                logArea.appendText(visibleMessage + "\n");
+            }
         });
     }
 
@@ -1737,6 +1985,14 @@ public class ClientGuiMain extends Application {
         if ("NOTIFICATION".equalsIgnoreCase(type)) {
             appendLog(content);
             maybeAppendPickedCardToHand(content);
+            if (isLeaderboardContent(content)) {
+                renderLeaderboardResult(content);
+                return;
+            }
+            if (isFinalReportContent(content)) {
+                showEndGameReport(content);
+                return;
+            }
             
             // Filter notifications to prevent spamming the central toast with routine actions.
             // Only show the toast for major events or bonuses.
@@ -1790,10 +2046,86 @@ public class ClientGuiMain extends Application {
             } else {
                 showAlert(content);
             }
+        } else if ("LEADERBOARD".equalsIgnoreCase(type)) {
+            renderLeaderboardResult(content);
         } else if ("ERROR".equalsIgnoreCase(type)) {
             appendLog(content);
             showAlert(content);
         }
+    }
+
+    private boolean isLeaderboardContent(String content) {
+        if (content == null) {
+            return false;
+        }
+        String trimmed = content.trim();
+        return trimmed.startsWith("Leaderboard for ")
+                || trimmed.startsWith("No leaderboard entries for ");
+    }
+
+    private boolean isFinalReportContent(String content) {
+        return content != null && content.trim().startsWith("Game over. Final scores:");
+    }
+
+    private void showEndGameReport(String report) {
+        if (gameScene == null || !(gameScene.getRoot() instanceof StackPane)) {
+            showThemedNotification(report);
+            return;
+        }
+
+        StackPane root = (StackPane) gameScene.getRoot();
+        root.getChildren().removeIf(node -> "endGameReportOverlay".equals(node.getId()));
+
+        StackPane overlay = new StackPane();
+        overlay.setId("endGameReportOverlay");
+        overlay.setStyle("-fx-background-color: rgba(8,4,2,0.78);");
+        overlay.setOnMouseClicked(e -> e.consume());
+
+        VBox panel = new VBox(18);
+        panel.setAlignment(Pos.CENTER);
+        panel.setPadding(new Insets(34, 42, 34, 42));
+        panel.setMaxWidth(820);
+        panel.setMaxHeight(660);
+        panel.setStyle("-fx-background-color: linear-gradient(to bottom, rgba(63,29,12,0.98), rgba(24,10,4,0.98)); "
+                + "-fx-background-radius: 12; -fx-border-color: #ecc94b; -fx-border-width: 3; -fx-border-radius: 12; "
+                + "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.90), 24, 0, 0, 10);");
+
+        Text title = new Text("GAME OVER");
+        title.setFont(Font.font(TITLE_FONT, FontWeight.NORMAL, 58));
+        title.setFill(Color.web("#ffd66f"));
+        title.setStyle("-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.95), 5, 0.5, 0, 2);");
+
+        TextArea reportArea = new TextArea(stripImageMetadata(report));
+        reportArea.setEditable(false);
+        reportArea.setWrapText(true);
+        reportArea.setPrefRowCount(16);
+        reportArea.setMinHeight(360);
+        reportArea.setMaxHeight(420);
+        reportArea.setFont(Font.font(LABEL_FONT, FontWeight.BOLD, 15));
+        reportArea.setStyle("-fx-control-inner-background: rgba(14,7,3,0.96); "
+                + "-fx-text-fill: #fff0c2; -fx-highlight-fill: #a66a2b; "
+                + "-fx-background-color: rgba(14,7,3,0.96); -fx-background-radius: 8; "
+                + "-fx-border-color: rgba(166,106,43,0.65); -fx-border-width: 2; -fx-border-radius: 8;");
+
+        HBox buttons = new HBox(22);
+        buttons.setAlignment(Pos.CENTER);
+        Button closeBtn = createMenuButton("CLOSE", false);
+        closeBtn.setMinWidth(220);
+        closeBtn.setFont(Font.font(MENU_FONT, FontWeight.BOLD, 20));
+        closeBtn.setOnAction(e -> root.getChildren().remove(overlay));
+        Button menuBtn = createMenuButton("MAIN MENU", true);
+        menuBtn.setMinWidth(260);
+        menuBtn.setFont(Font.font(MENU_FONT, FontWeight.BOLD, 20));
+        menuBtn.setOnAction(e -> {
+            root.getChildren().remove(overlay);
+            switchScene(mainMenuScene);
+        });
+        buttons.getChildren().addAll(closeBtn, menuBtn);
+
+        panel.getChildren().addAll(title, reportArea, buttons);
+        overlay.getChildren().add(panel);
+        root.getChildren().add(overlay);
+        overlay.toFront();
     }
 
     /**
@@ -1989,6 +2321,14 @@ public class ClientGuiMain extends Application {
         if (eraLabel != null) {
             Matcher matcher = ERA_PATTERN.matcher(status);
             eraLabel.setText(matcher.find() ? "Era: " + matcher.group(1) : "Era: -");
+        }
+        Matcher playersMatcher = PLAYERS_COUNT_PATTERN.matcher(status);
+        if (playersMatcher.find()) {
+            try {
+                currentPlayerCount = Integer.parseInt(playersMatcher.group(1));
+            } catch (NumberFormatException ignored) {
+                // Keep the last known value.
+            }
         }
 
         updateTurnOrderTrackImage(status);
@@ -3430,7 +3770,11 @@ public class ClientGuiMain extends Application {
         @Override
         public void disconnect() {
             if (heartbeatExecutor != null) heartbeatExecutor.shutdownNow();
-            try { service.disconnect(nickname); } catch (Exception ignored) {}
+            try {
+                if (nickname != null) {
+                    service.disconnect(nickname);
+                }
+            } catch (Exception ignored) {}
             try { UnicastRemoteObject.unexportObject(callback, true); } catch (Exception ignored) {}
         }
 

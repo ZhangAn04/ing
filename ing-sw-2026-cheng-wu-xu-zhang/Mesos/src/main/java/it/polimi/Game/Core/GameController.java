@@ -91,6 +91,7 @@ public class GameController {
         WAITING_FOR_PLAYERS,
         PLACING_TOTEMS,
         RESOLVING_ACTIONS,
+        RESOLVING_END_ROUND_CARDS,
         FINISHED
     }
 
@@ -114,6 +115,8 @@ public class GameController {
     private int remainingUpperPicks;
     private int remainingLowerPicks;
     private final List<Player> nextRoundOrder = new ArrayList<>();
+    private final List<Player> endRoundCardOrder = new ArrayList<>();
+    private int endRoundCardIndex;
 
     /** Executor service for managing background turn timers. */
     private final ScheduledExecutorService turnTimerExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -126,6 +129,12 @@ public class GameController {
 
     /** Reference to the timeout that awards victory to the sole connected player. */
     private ScheduledFuture<?> disconnectionTimeoutTask;
+
+    /** Periodic task that publishes the remaining reconnection time. */
+    private ScheduledFuture<?> disconnectionCountdownTask;
+
+    /** Absolute deadline of the active reconnection window, in epoch milliseconds. */
+    private long disconnectionDeadlineMillis;
 
     /** Whether game actions are suspended because fewer than two players are online. */
     private boolean suspendedForDisconnection;
@@ -240,13 +249,13 @@ public class GameController {
 
         if (phase == InteractivePhase.FINISHED
                 && !("status".equals(action) || "hand".equals(action) || "stats".equals(action)
-                || "help".equals(action) || "quit".equals(action))) {
+                || "help".equals(action) || "hint".equals(action) || "quit".equals(action))) {
             return "Game finished. Use STATUS to view final scores.";
         }
 
         if (suspendedForDisconnection
                 && !("status".equals(action) || "hand".equals(action) || "stats".equals(action)
-                || "help".equals(action) || "quit".equals(action))) {
+                || "help".equals(action) || "hint".equals(action) || "quit".equals(action))) {
             return "Game suspended: waiting for another player to reconnect.";
         }
 
@@ -257,7 +266,7 @@ public class GameController {
             switch (action) {
                 case "help":
                     return String.join("\n",
-                            "Commands: help, ready, unready, color <name>, init <players>, status, stats [player], hand <player>, prepare <tiles|firstround>, manage, round, totem <letter>, pick <upper|lower> <t|b> <index>, quit",
+                            "Commands: help, hint, ready, unready, color <name>, init <players>, status, stats [player], hand <player>, prepare <tiles|firstround>, manage, round, totem <letter>, pick <upper|lower> <t|b> <index>, quit",
                             "",
                             "Totem / Offer tiles:",
                             "1) Choose an Offer Tile to place totem.",
@@ -295,6 +304,8 @@ public class GameController {
                     return "Round executed.";
                 case "status":
                     return statusText();
+                case "hint":
+                    return hintCommand(nickname);
                 case "hand":
                     return handCommand(tokens);
                 case "stats":
@@ -309,6 +320,79 @@ public class GameController {
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
+    }
+
+    /**
+     * Describes the next useful action for the requesting player. When another
+     * player owns the turn, the response explicitly identifies who is expected
+     * to act and what they must do.
+     */
+    private String hintCommand(String nickname) {
+        if (suspendedForDisconnection) {
+            return "Waiting for another player to reconnect.";
+        }
+
+        switch (phase) {
+            case LOBBY:
+                if (nickname != null && !readyNicknames.contains(nickname)) {
+                    return "Type 'ready' when you are ready to start.";
+                }
+                for (String player : pendingNicknames) {
+                    if (!readyNicknames.contains(player)) {
+                        return "Waiting for player " + player + " to type 'ready'.";
+                    }
+                }
+                return "Waiting for more players to join the lobby.";
+            case SELECTING_COLORS:
+                return turnHint(nickname, currentColorChooser(),
+                        "choose a color with 'color <name>'");
+            case WAITING_FOR_PLAYERS:
+                return "Waiting for the remaining players to join the match.";
+            case PLACING_TOTEMS:
+                if (placementIndex >= turnOrder.size()) {
+                    return "Waiting for action resolution to begin.";
+                }
+                return turnHint(nickname, safeNick(turnOrder.get(placementIndex)),
+                        "place a totem with 'totem <letter>'");
+            case RESOLVING_ACTIONS:
+                if (actionIndex >= actionOrder.size()) {
+                    return "Waiting for end-of-round effects.";
+                }
+                return turnHint(nickname, safeNick(actionOrder.get(actionIndex)),
+                        pickInstruction());
+            case RESOLVING_END_ROUND_CARDS:
+                if (endRoundCardIndex >= endRoundCardOrder.size()) {
+                    return "Waiting for the round to end.";
+                }
+                return turnHint(nickname, safeNick(endRoundCardOrder.get(endRoundCardIndex)),
+                        "take one upper-row card with 'pick upper <t|b> <index>'");
+            case FINISHED:
+                return "The game is finished. Use 'status' to view the final scores.";
+            default:
+                return "No action is required right now.";
+        }
+    }
+
+    /** Returns a player-relative turn suggestion. */
+    private String turnHint(String requester, String currentPlayer, String action) {
+        if (requester != null && requester.equals(currentPlayer)) {
+            return "Your turn: " + action + ".";
+        }
+        return "Waiting for player " + currentPlayer + " to " + action + ".";
+    }
+
+    /** Describes the rows still required by the current offer-tile action. */
+    private String pickInstruction() {
+        if (remainingUpperPicks > 0 && remainingLowerPicks > 0) {
+            return "pick " + remainingUpperPicks + " upper-row and " + remainingLowerPicks
+                    + " lower-row card(s) with 'pick <upper|lower> <t|b> <index>'";
+        }
+        if (remainingUpperPicks > 0) {
+            return "pick " + remainingUpperPicks
+                    + " upper-row card(s) with 'pick upper <t|b> <index>'";
+        }
+        return "pick " + remainingLowerPicks
+                + " lower-row card(s) with 'pick lower <t|b> <index>'";
     }
 
     /**
@@ -485,16 +569,60 @@ public class GameController {
                 || disconnectionTimeoutTask.isDone()) {
             cancelDisconnectionTimeout();
             timeoutCandidateNickname = candidate;
+            disconnectionDeadlineMillis = System.currentTimeMillis() + disconnectionTimeoutMillis;
             disconnectionTimeoutTask = turnTimerExecutor.schedule(
                     () -> handleDisconnectionTimeout(candidate),
                     disconnectionTimeoutMillis,
                     TimeUnit.MILLISECONDS);
-        }
-        if (!wasSuspended) {
-            game.notifyNotification("Game suspended: waiting for another player to reconnect. "
-                    + candidate + " will win if the reconnection timeout expires.");
+            publishDisconnectionCountdown();
+            disconnectionCountdownTask = turnTimerExecutor.scheduleAtFixedRate(
+                    this::publishDisconnectionCountdown,
+                    1,
+                    1,
+                    TimeUnit.SECONDS);
         }
         return true;
+    }
+
+    /**
+     * Publishes the player being awaited and the number of seconds left in the
+     * active reconnection window.
+     */
+    private synchronized void publishDisconnectionCountdown() {
+        if (!suspendedForDisconnection || timeoutCandidateNickname == null
+                || disconnectionDeadlineMillis <= 0 || gameFinished) {
+            return;
+        }
+
+        long remainingMillis = disconnectionDeadlineMillis - System.currentTimeMillis();
+        long remainingSeconds = Math.max(0, (remainingMillis + 999) / 1000);
+        if (remainingSeconds == 0) {
+            return;
+        }
+
+        String awaitedPlayers = offlinePlayerNames();
+        String awaitedTarget = "another player".equals(awaitedPlayers)
+                ? awaitedPlayers
+                : (awaitedPlayers.contains(",") ? "players " : "player ") + awaitedPlayers;
+        game.notifyNotification("Waiting for " + awaitedTarget
+                + " to reconnect. Time remaining: " + remainingSeconds + " second"
+                + (remainingSeconds == 1 ? "." : "s."));
+    }
+
+    /**
+     * Returns the nicknames of offline players, or a generic label if no nickname
+     * is currently available.
+     *
+     * @return comma-separated offline player nicknames
+     */
+    private String offlinePlayerNames() {
+        List<String> offlineNicknames = new ArrayList<>();
+        for (Player player : game.getPlayers()) {
+            if (!player.isOnline() && player.getNickname() != null) {
+                offlineNicknames.add(player.getNickname());
+            }
+        }
+        return offlineNicknames.isEmpty() ? "another player" : String.join(", ", offlineNicknames);
     }
 
     /**
@@ -530,7 +658,12 @@ public class GameController {
         if (disconnectionTimeoutTask != null && !disconnectionTimeoutTask.isDone()) {
             disconnectionTimeoutTask.cancel(false);
         }
+        if (disconnectionCountdownTask != null && !disconnectionCountdownTask.isDone()) {
+            disconnectionCountdownTask.cancel(false);
+        }
         disconnectionTimeoutTask = null;
+        disconnectionCountdownTask = null;
+        disconnectionDeadlineMillis = 0;
     }
 
     /**
@@ -546,6 +679,14 @@ public class GameController {
             }
         } else if (phase == InteractivePhase.RESOLVING_ACTIONS && actionIndex < actionOrder.size()) {
             Player current = actionOrder.get(actionIndex);
+            if (current.isOnline()) {
+                startTurnTimer(current);
+            } else {
+                checkAndExecuteAutoMove(current);
+            }
+        } else if (phase == InteractivePhase.RESOLVING_END_ROUND_CARDS
+                && endRoundCardIndex < endRoundCardOrder.size()) {
+            Player current = endRoundCardOrder.get(endRoundCardIndex);
             if (current.isOnline()) {
                 startTurnTimer(current);
             } else {
@@ -588,6 +729,11 @@ public class GameController {
                 if (current.equals(player)) {
                     executeAutoCardPicks(player);
                 }
+            }
+        } else if (phase == InteractivePhase.RESOLVING_END_ROUND_CARDS) {
+            if (endRoundCardIndex < endRoundCardOrder.size()
+                    && endRoundCardOrder.get(endRoundCardIndex).equals(player)) {
+                executeAutoCardPicks(player);
             }
         }
     }
@@ -664,13 +810,18 @@ public class GameController {
 
         // 3. Complete action when picks are satisfied.
         if (remainingUpperPicks == 0 && remainingLowerPicks == 0) {
-            finishCurrentActionPlayer();
-            if (actionIndex >= actionOrder.size()) {
-                endRoundAndStartNextPlacement();
+            if (phase == InteractivePhase.RESOLVING_END_ROUND_CARDS) {
+                endRoundCardIndex++;
+                advanceEndRoundCardPlayer();
             } else {
-                advanceActionPlayer();
-                Player next = actionOrder.get(actionIndex);
-                checkAndExecuteAutoMove(next);
+                finishCurrentActionPlayer();
+                if (actionIndex >= actionOrder.size()) {
+                    beginEndRoundCardEffects();
+                } else {
+                    advanceActionPlayer();
+                    Player next = actionOrder.get(actionIndex);
+                    checkAndExecuteAutoMove(next);
+                }
             }
         }
     }
@@ -1006,6 +1157,8 @@ public class GameController {
         placementIndex = 0;
         actionOrder.clear();
         actionIndex = 0;
+        endRoundCardOrder.clear();
+        endRoundCardIndex = 0;
         remainingUpperPicks = 0;
         remainingLowerPicks = 0;
         nextRoundOrder.clear();
@@ -1130,11 +1283,14 @@ public class GameController {
         if (nickname == null) {
             return "This command requires a logged-in player.";
         }
-        if (phase != InteractivePhase.RESOLVING_ACTIONS) {
+        if (phase != InteractivePhase.RESOLVING_ACTIONS
+                && phase != InteractivePhase.RESOLVING_END_ROUND_CARDS) {
             return "You cannot pick cards right now.";
         }
 
-        Player current = actionOrder.get(actionIndex);
+        Player current = phase == InteractivePhase.RESOLVING_END_ROUND_CARDS
+                ? endRoundCardOrder.get(endRoundCardIndex)
+                : actionOrder.get(actionIndex);
         if (!nickname.equals(current.getNickname())) {
             return "Not your turn. Current player: " + safeNick(current);
         }
@@ -1205,10 +1361,13 @@ public class GameController {
         }
 
         if (remainingUpperPicks == 0 && remainingLowerPicks == 0) {
+            if (phase == InteractivePhase.RESOLVING_END_ROUND_CARDS) {
+                endRoundCardIndex++;
+                return takenLine + "\n" + advanceEndRoundCardPlayer();
+            }
             finishCurrentActionPlayer();
             if (actionIndex >= actionOrder.size()) {
-                // End of round.
-                return takenLine + "\n" + endRoundAndStartNextPlacement();
+                return takenLine + "\n" + beginEndRoundCardEffects();
             }
             return takenLine + "\n" + advanceActionPlayer();
         }
@@ -1316,16 +1475,22 @@ public class GameController {
 
         CardLoader.TurnOrderTrackRule rule = rules[slot - 1];
         int delta = rule.getFoodDelta();
-        if (delta > 0) {
-            int bonus = 0;
-            for (Building b : current.getBuildings()) {
-                if (b instanceof it.polimi.Buildings.Turn_Start_Effect) {
-                    bonus++;
-                }
+        int buildingBonus = 0;
+        for (Building building : current.getBuildings()) {
+            if (building instanceof it.polimi.Buildings.Turn_Start_Effect effect) {
+                buildingBonus += effect.getFoodBonus();
             }
-            current.receiveFood(delta + bonus, "turnOrderTrack");
+        }
+
+        if (delta > 0) {
+            current.receiveFood(delta + buildingBonus, "turnOrderTrack");
         } else if (delta < 0) {
             current.payFood(-delta, rule.getPrestigePenalty(), "turnOrderTrack");
+            if (buildingBonus > 0) {
+                current.receiveFood(buildingBonus, "turnOrderTrackBuilding");
+            }
+        } else if (buildingBonus > 0) {
+            current.receiveFood(buildingBonus, "turnOrderTrackBuilding");
         }
     }
 
@@ -1344,14 +1509,6 @@ public class GameController {
             int requiredUpper = tile == null ? 0 : tile.getNumUpperCards();
             int requiredLower = tile == null ? 0 : tile.getNumLowerCards();
             
-            int extraPicks = 0;
-            for (Building b : current.getBuildings()) {
-                if (b instanceof it.polimi.Buildings.Turn_End_Card) {
-                    extraPicks++;
-                }
-            }
-            requiredUpper += extraPicks;
-
             remainingUpperPicks = requiredUpper;
             remainingLowerPicks = requiredLower;
 
@@ -1375,6 +1532,57 @@ public class GameController {
             return "Now acting: " + safeNick(current) + " (tile " + (tile == null ? "?" : tile.getLetter())
                     + ")\nRemaining picks: upper=" + remainingUpperPicks + ", lower=" + remainingLowerPicks
                     + "\nUse: pick <upper|lower> <t|b> <index>";
+        }
+
+        return beginEndRoundCardEffects();
+    }
+
+    /**
+     * Starts the optional building effects that occur after every player action and
+     * before end-of-round events. Each owned Turn_End_Card grants one upper-row pick.
+     */
+    private String beginEndRoundCardEffects() {
+        endRoundCardOrder.clear();
+        endRoundCardIndex = 0;
+
+        for (Player player : nextRoundOrder) {
+            for (Building building : player.getBuildings()) {
+                if (building instanceof it.polimi.Buildings.Turn_End_Card) {
+                    endRoundCardOrder.add(player);
+                }
+            }
+        }
+
+        if (endRoundCardOrder.isEmpty()) {
+            return endRoundAndStartNextPlacement();
+        }
+
+        phase = InteractivePhase.RESOLVING_END_ROUND_CARDS;
+        return advanceEndRoundCardPlayer();
+    }
+
+    /** Advances the dedicated end-of-round building-effect sequence. */
+    private String advanceEndRoundCardPlayer() {
+        while (endRoundCardIndex < endRoundCardOrder.size()) {
+            Player current = endRoundCardOrder.get(endRoundCardIndex);
+            remainingUpperPicks = noSelectableUpperCards(current) ? 0 : 1;
+            remainingLowerPicks = 0;
+
+            if (remainingUpperPicks == 0) {
+                endRoundCardIndex++;
+                continue;
+            }
+
+            if (!current.isOnline()) {
+                executeAutoCardPicks(current);
+                return currentInteractiveTurnMessage();
+            }
+
+            return "Now acting: " + safeNick(current) + " (tile END-ROUND)"
+                    + "\nEnd-of-round building effect: take 1 character or building"
+                    + " from the upper row (paying the building cost)."
+                    + "\nRemaining picks: upper=1, lower=0"
+                    + "\nUse: pick upper <t|b> <index>";
         }
 
         return endRoundAndStartNextPlacement();
@@ -1442,6 +1650,14 @@ public class GameController {
                     + " (tile " + (current.getOfferTile() == null ? "?" : current.getOfferTile().getLetter()) + ")"
                     + "\nRemaining picks: upper=" + remainingUpperPicks + ", lower=" + remainingLowerPicks
                     + "\nUse: pick <upper|lower> <t|b> <index>";
+        }
+        if (phase == InteractivePhase.RESOLVING_END_ROUND_CARDS
+                && endRoundCardIndex < endRoundCardOrder.size()) {
+            return "Now acting: " + safeNick(endRoundCardOrder.get(endRoundCardIndex))
+                    + " (tile END-ROUND)"
+                    + "\nEnd-of-round building effect: take 1 card from the upper row"
+                    + "\nRemaining picks: upper=1, lower=0"
+                    + "\nUse: pick upper <t|b> <index>";
         }
         if (phase == InteractivePhase.FINISHED) {
             return "Game over.";
@@ -1550,8 +1766,10 @@ public class GameController {
         timeoutCandidateNickname = null;
         gameFinished = true;
         phase = InteractivePhase.FINISHED;
-        finalReport = reportText;
-        persistFinalScores(endGameBonusByPlayer, winners, sorted, reportText);
+        String databaseRanking = persistFinalScores(endGameBonusByPlayer, winners, sorted, reportText);
+        finalReport = databaseRanking == null || databaseRanking.isBlank()
+                ? reportText
+                : reportText + "\n\n" + databaseRanking;
         System.out.println(finalReport);
         try {
             game.notifyNotification(finalReport);
@@ -1569,7 +1787,7 @@ public class GameController {
      * @param leaderboard players in final ranking order
      * @param reportText final textual report
      */
-    private void persistFinalScores(Map<Player, EndGameBonusBreakdown> endGameBonusByPlayer, List<Player> winners, List<Player> leaderboard, String reportText) {
+    private String persistFinalScores(Map<Player, EndGameBonusBreakdown> endGameBonusByPlayer, List<Player> winners, List<Player> leaderboard, String reportText) {
         try {
             List<PlayerScore> scores = new ArrayList<>();
             for (int i = 0; i < leaderboard.size(); i++) {
@@ -1585,11 +1803,42 @@ public class GameController {
                         isWinner));
             }
 
-            gameResultRepository.saveGameResult(new GameResult(matchId, Instant.now(), reportText, scores));
+            int playerCount = game.getPlayers().size();
+            gameResultRepository.saveGameResult(new GameResult(matchId, Instant.now(), reportText, scores, playerCount));
+            return databaseRankingText(scores, playerCount);
         } catch (Exception e) {
             // Persistence must never break the game flow.
             System.err.println("[DB] Failed to save match scores: " + e.getMessage());
+            return "";
         }
+    }
+
+    private String databaseRankingText(List<PlayerScore> scores, int playerCount) {
+        if (scores == null || scores.isEmpty() || playerCount <= 0) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder("Database leaderboard:");
+        boolean anyPosition = false;
+        for (PlayerScore score : scores) {
+            int position = gameResultRepository.getPlayerPosition(matchId, score.nickname(), playerCount);
+            if (position <= 0) {
+                continue;
+            }
+            sb.append("\n")
+                    .append(score.nickname())
+                    .append(" is ranked #")
+                    .append(position)
+                    .append(" among all completed ")
+                    .append(playerCount)
+                    .append("-player games.");
+            anyPosition = true;
+        }
+        if (!anyPosition) {
+            return "";
+        }
+        sb.append("\nUse the main menu Leaderboard to view the full ranking.");
+        return sb.toString();
     }
 
     /**
@@ -2177,6 +2426,16 @@ public class GameController {
                         .append(" tile=")
                         .append(p.getOfferTile() == null ? "-" : p.getOfferTile().getLetter());
             }
+        }
+
+        if (phase == InteractivePhase.RESOLVING_END_ROUND_CARDS
+                && endRoundCardIndex < endRoundCardOrder.size()) {
+            Player current = endRoundCardOrder.get(endRoundCardIndex);
+            sb.append("\nActing: ").append(safeNick(current))
+                    .append(" (tile END-ROUND)")
+                    .append(" remaining upper=").append(remainingUpperPicks)
+                    .append(" lower=0")
+                    .append("\nEnd-round building effect active");
         }
 
         sb.append("\n\nUpper tribe row:");

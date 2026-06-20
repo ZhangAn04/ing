@@ -12,6 +12,7 @@ public final class GameResult {
 	private final Instant endedAt;
 	private final String finalReport;
 	private final List<PlayerScore> playerScores;
+	private final int playerCount;
 
 	/**
 	 * Constructs a new GameResult holding the final scores and reports of a match.
@@ -20,12 +21,14 @@ public final class GameResult {
 	 * @param endedAt The timestamp when the match finished.
 	 * @param finalReport A text report summarizing the match events.
 	 * @param playerScores The list of player scores.
+	 * @param playerCount The number of players in the finished match.
 	 */
-	public GameResult(String matchId, Instant endedAt, String finalReport, List<PlayerScore> playerScores) {
+	public GameResult(String matchId, Instant endedAt, String finalReport, List<PlayerScore> playerScores, int playerCount) {
 		this.matchId = matchId;
 		this.endedAt = endedAt;
 		this.finalReport = finalReport;
 		this.playerScores = playerScores;
+		this.playerCount = playerCount;
 	}
 
 	/**
@@ -62,5 +65,14 @@ public final class GameResult {
 	 */
 	public List<PlayerScore> playerScores() {
 		return playerScores;
+	}
+
+	/**
+	 * Returns the number of players in the finished match.
+	 *
+	 * @return The player count.
+	 */
+	public int playerCount() {
+		return playerCount;
 	}
 }

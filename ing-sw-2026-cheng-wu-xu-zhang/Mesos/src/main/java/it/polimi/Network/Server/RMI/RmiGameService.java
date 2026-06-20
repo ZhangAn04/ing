@@ -1,6 +1,9 @@
 package it.polimi.Network.Server.RMI;
 
 import it.polimi.Game.Core.GameController;
+import it.polimi.Game.Persistence.GameResultRepositories;
+import it.polimi.Game.Persistence.GameResultRepository;
+import it.polimi.Game.Persistence.LeaderboardFormatter;
 import it.polimi.Network.Common.ActionMessage;
 import it.polimi.Network.Common.SerializedUpdate;
 import it.polimi.Network.RMI.ClientCallbackRemote;
@@ -174,7 +177,8 @@ public class RmiGameService extends UnicastRemoteObject implements GameServiceRe
                 lobby.broadcastToRoomExcept(room.getRoomId(), action.getNickname(), "NOTIFICATION", response);
             }
             notifyNextActingPlayer(action.getNickname(), response);
-            if (!cmd.startsWith("help") && !cmd.startsWith("hand") && !cmd.startsWith("stats") && !cmd.startsWith("quit")
+            if (!cmd.startsWith("help") && !cmd.startsWith("hint") && !cmd.startsWith("hand")
+                    && !cmd.startsWith("stats") && !cmd.startsWith("quit")
                     && !response.startsWith("Unknown command:")) {
                 lobby.broadcastToRoom(room.getRoomId(), "STATUS_UPDATE", room.getController().statusSnapshot());
             }
@@ -187,6 +191,16 @@ public class RmiGameService extends UnicastRemoteObject implements GameServiceRe
         } catch (Exception e) {
             return new SerializedUpdate("ERROR", "Error: " + e.getMessage(), false);
         }
+    }
+
+    @Override
+    public SerializedUpdate getLeaderboard(int playerCount) {
+        if (playerCount < 2 || playerCount > 5) {
+            return new SerializedUpdate("ERROR", "Player count must be between 2 and 5.", false);
+        }
+        GameResultRepository repository = GameResultRepositories.fromEnvironment();
+        String content = LeaderboardFormatter.format(repository.getLeaderboardByPlayerCount(playerCount), playerCount);
+        return new SerializedUpdate("LEADERBOARD", content, true);
     }
 
     /**

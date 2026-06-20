@@ -42,7 +42,10 @@ public class ClientMain {
         } else {
             String hostName = resolveSocketHost(args);
             int portNumber = resolveSocketPort(args);
-            runSocketClient(hostName, portNumber);
+            BufferedReader stdIn = new BufferedReader(new InputStreamReader(System.in));
+            while (runSocketClient(hostName, portNumber, stdIn)) {
+                // A fresh connection is required after leaving the current room.
+            }
         }
     }
 
@@ -80,8 +83,10 @@ public class ClientMain {
      *
      * @param hostName server host name
      * @param portNumber server socket port
+     * @param stdIn shared terminal input, retained when returning to the gateway menu
+     * @return {@code true} when the client requested another gateway session
      */
-    private static void runSocketClient(String hostName, int portNumber) {
+    private static boolean runSocketClient(String hostName, int portNumber, BufferedReader stdIn) {
         ObjectMapper mapper = new ObjectMapper();
         ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
         ConsoleTuiRenderer tuiRenderer = new ConsoleTuiRenderer();
@@ -91,8 +96,7 @@ public class ClientMain {
 
         try (Socket echoSocket = new Socket(hostName, portNumber);
              PrintWriter out = new PrintWriter(echoSocket.getOutputStream(), true);
-             BufferedReader in = new BufferedReader(new InputStreamReader(echoSocket.getInputStream()));
-             BufferedReader stdIn = new BufferedReader(new InputStreamReader(System.in))) {
+             BufferedReader in = new BufferedReader(new InputStreamReader(echoSocket.getInputStream()))) {
 
             System.out.println("Connected to " + hostName + ":" + portNumber);
 
@@ -101,21 +105,25 @@ public class ClientMain {
             listener.start();
 
             try {
-                // Handshake Phase
-                ActionMessage loginAction = handleGatewayMenu(stdIn, tuiRenderer);
-                if (loginAction == null) return;
+                // Handshake Phase. Rejected attempts return to the gateway menu while
+                // keeping the same server connection open.
+                while (true) {
+                    ActionMessage loginAction = handleGatewayMenu(stdIn, tuiRenderer);
+                    if (loginAction == null) return false;
 
-                loginState.setNickname(loginAction.getNickname());
-                tuiRenderer.setLocalNickname(loginAction.getNickname());
-                out.println(mapper.writeValueAsString(loginAction));
-                
-                // Wait for the actual server response instead of relying on a fixed delay.
-                if (!loginState.awaitLoginResult(5, TimeUnit.SECONDS)) {
-                    tuiRenderer.printLine("Login timed out. Please reconnect and try again.");
-                    return;
-                }
-                if (!loginState.isLoginAccepted()) {
-                    return;
+                    loginState.reset();
+                    loginState.setNickname(loginAction.getNickname());
+                    tuiRenderer.setLocalNickname(loginAction.getNickname());
+                    out.println(mapper.writeValueAsString(loginAction));
+
+                    if (!loginState.awaitLoginResult(5, TimeUnit.SECONDS)) {
+                        tuiRenderer.printLine("Login timed out. Please reconnect and try again.");
+                        return false;
+                    }
+                    if (loginState.isLoginAccepted()) {
+                        break;
+                    }
+                    tuiRenderer.printLine("Returning to the gateway menu.");
                 }
                 heartbeatExecutor.scheduleAtFixedRate(() -> {
                     try {
@@ -130,9 +138,9 @@ public class ClientMain {
                 // Interaction loop
                 tuiRenderer.printLine("Type 'help' to show available commands.");
                 tuiRenderer.printLine("Hint: use 'status' to view the current lobby information.");
-                tuiRenderer.printLine("Hint: use 'ready' when you are ready to start.");
                 tuiRenderer.renderPrompt();
                 String userInput;
+                boolean returnToLobby = false;
                 while ((userInput = stdIn.readLine()) != null) {
                     String command = userInput.trim();
                     if (command.isEmpty()) continue;
@@ -147,6 +155,11 @@ public class ClientMain {
                         tuiRenderer.renderPlayerIdentity();
                         continue;
                     }
+                    if ("lobby".equalsIgnoreCase(command)) {
+                        tuiRenderer.printLine("Leaving the current match. Returning to the gateway menu.");
+                        returnToLobby = true;
+                        break;
+                    }
                     if (isRestrictedTuiCommand(command)) {
                         tuiRenderer.printLine("This command is not available in the TUI. Use the GUI controls instead.");
                         tuiRenderer.renderPrompt();
@@ -160,6 +173,7 @@ public class ClientMain {
                     out.println(mapper.writeValueAsString(action));
                     if ("quit".equalsIgnoreCase(command)) break;
                 }
+                return returnToLobby;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } finally {
@@ -168,9 +182,11 @@ public class ClientMain {
             }
         } catch (IOException e) {
             System.err.println("Error: Could not connect to the server.");
+            return false;
         } finally {
             heartbeatExecutor.shutdownNow();
         }
+        return false;
     }
 
     /**
@@ -214,7 +230,7 @@ public class ClientMain {
             try { roomId = Integer.parseInt(roomIdStr.trim()); } 
             catch (NumberFormatException e) { tuiRenderer.printLine("Invalid ID."); continue; }
 
-            System.out.print("Enter secret PIN: ");
+            System.out.print("Enter Personal PIN: ");
             String pin = stdIn.readLine();
             if (pin == null) return null;
             pin = pin.trim();
@@ -336,7 +352,7 @@ public class ClientMain {
     private static final class SocketLoginState {
         private volatile boolean loginAccepted;
         private volatile String nickname;
-        private final CountDownLatch loginResultReceived = new CountDownLatch(1);
+        private volatile CountDownLatch loginResultReceived = new CountDownLatch(1);
 
         /**
          * Records a login result received by the socket listener.
@@ -360,6 +376,12 @@ public class ClientMain {
          */
         private boolean awaitLoginResult(long timeout, TimeUnit unit) throws InterruptedException {
             return loginResultReceived.await(timeout, unit);
+        }
+
+        /** Resets the result latch before a new gateway login attempt. */
+        private void reset() {
+            loginAccepted = false;
+            loginResultReceived = new CountDownLatch(1);
         }
 
         /** @return whether the server accepted the login request */

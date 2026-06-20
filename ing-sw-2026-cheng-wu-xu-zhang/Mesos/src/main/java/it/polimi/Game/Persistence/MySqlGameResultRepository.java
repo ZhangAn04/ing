@@ -7,6 +7,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * JDBC-based repository that stores match results in a MySQL database.
@@ -40,6 +42,42 @@ public final class MySqlGameResultRepository implements GameResultRepository {
         this.tableName = sanitizeTableName(tableName, DEFAULT_TABLE);
         this.reportTableName = sanitizeTableName(this.tableName + DEFAULT_REPORT_TABLE_SUFFIX, DEFAULT_TABLE + DEFAULT_REPORT_TABLE_SUFFIX);
         this.autoCreateTable = autoCreateTable;
+    }
+
+    @Override
+    public List<LeaderboardEntry> getLeaderboardByPlayerCount(int playerCount) {
+        if (playerCount <= 0) {
+            return List.of();
+        }
+
+        try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password)) {
+            if (autoCreateTable) {
+                ensureTableExists(connection);
+                ensureReportTableExists(connection);
+            }
+            return selectLeaderboard(connection, playerCount);
+        } catch (Exception e) {
+            System.err.println("[DB] Could not read leaderboard: " + e.getMessage());
+            return List.of();
+        }
+    }
+
+    @Override
+    public int getPlayerPosition(String matchId, String nickname, int playerCount) {
+        if (matchId == null || nickname == null || playerCount <= 0) {
+            return 0;
+        }
+
+        try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password)) {
+            if (autoCreateTable) {
+                ensureTableExists(connection);
+                ensureReportTableExists(connection);
+            }
+            return selectPlayerPosition(connection, matchId, nickname, playerCount);
+        } catch (Exception e) {
+            System.err.println("[DB] Could not read leaderboard position: " + e.getMessage());
+            return 0;
+        }
     }
 
     /**
@@ -151,8 +189,8 @@ public final class MySqlGameResultRepository implements GameResultRepository {
      * @throws SQLException if the batch cannot be executed
      */
     private void insertScores(Connection connection, GameResult result) throws SQLException {
-        String sql = "INSERT INTO " + tableName + " (match_id, ended_at, player_nickname, prestige_points, food, endgame_bonus, player_rank, is_winner)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO " + tableName + " (match_id, ended_at, player_nickname, prestige_points, food, endgame_bonus, player_rank, is_winner, player_count)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (PlayerScore score : result.playerScores()) {
@@ -164,10 +202,47 @@ public final class MySqlGameResultRepository implements GameResultRepository {
                 ps.setInt(6, score.endgameBonus());
                 ps.setInt(7, score.rank());
                 ps.setBoolean(8, score.winner());
+                ps.setInt(9, result.playerCount());
                 ps.addBatch();
             }
             ps.executeBatch();
         }
+    }
+
+    private List<LeaderboardEntry> selectLeaderboard(Connection connection, int playerCount) throws SQLException {
+        String sql = "SELECT match_id, ended_at, player_nickname, prestige_points, player_count "
+                + "FROM " + tableName + " "
+                + "WHERE player_count = ? "
+                + "ORDER BY prestige_points DESC, ended_at ASC, player_nickname ASC";
+
+        List<LeaderboardEntry> entries = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, playerCount);
+            try (ResultSet rs = ps.executeQuery()) {
+                int position = 1;
+                while (rs.next()) {
+                    Timestamp endedAt = rs.getTimestamp("ended_at");
+                    entries.add(new LeaderboardEntry(
+                            position++,
+                            rs.getString("player_nickname"),
+                            rs.getInt("prestige_points"),
+                            endedAt == null ? null : endedAt.toInstant(),
+                            rs.getInt("player_count"),
+                            rs.getString("match_id")));
+                }
+            }
+        }
+        return entries;
+    }
+
+    private int selectPlayerPosition(Connection connection, String matchId, String nickname, int playerCount) throws SQLException {
+        List<LeaderboardEntry> entries = selectLeaderboard(connection, playerCount);
+        for (LeaderboardEntry entry : entries) {
+            if (matchId.equals(entry.matchId()) && nickname.equals(entry.nickname())) {
+                return entry.position();
+            }
+        }
+        return 0;
     }
 
     /**
@@ -203,16 +278,55 @@ public final class MySqlGameResultRepository implements GameResultRepository {
                 + "ended_at TIMESTAMP NOT NULL,"
                 + "player_nickname VARCHAR(64) NOT NULL,"
                 + "prestige_points INT NOT NULL,"
+                + "player_count INT NOT NULL,"
                 + "food INT NOT NULL,"
                 + "endgame_bonus INT NOT NULL,"
                 + "player_rank INT NOT NULL,"
                 + "is_winner BOOLEAN NOT NULL,"
                 + "PRIMARY KEY (match_id, player_nickname),"
-                + "INDEX idx_ended_at (ended_at)"
+                + "INDEX idx_ended_at (ended_at),"
+                + "INDEX idx_leaderboard (player_count, prestige_points DESC, ended_at ASC)"
                 + ")";
 
         try (Statement st = connection.createStatement()) {
             st.executeUpdate(ddl);
+        }
+        ensurePlayerCountColumnExists(connection);
+    }
+
+    private void ensurePlayerCountColumnExists(Connection connection) throws SQLException {
+        if (columnExists(connection, tableName, "player_count")) {
+            ensureLeaderboardIndexExists(connection);
+            return;
+        }
+
+        try (Statement st = connection.createStatement()) {
+            st.executeUpdate("ALTER TABLE " + tableName + " ADD COLUMN player_count INT NOT NULL DEFAULT 0 AFTER prestige_points");
+        }
+        ensureLeaderboardIndexExists(connection);
+    }
+
+    private boolean columnExists(Connection connection, String table, String column) throws SQLException {
+        String sql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private void ensureLeaderboardIndexExists(Connection connection) {
+        try (Statement st = connection.createStatement()) {
+            st.executeUpdate("CREATE INDEX idx_leaderboard ON " + tableName
+                    + " (player_count, prestige_points DESC, ended_at ASC)");
+        } catch (SQLException e) {
+            // MySQL reports duplicate index when the table was already migrated.
+            if (e.getErrorCode() != 1061) {
+                System.err.println("[DB] Could not create leaderboard index: " + e.getMessage());
+            }
         }
     }
 

@@ -7,6 +7,9 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 import it.polimi.Game.Core.GameController;
+import it.polimi.Game.Persistence.GameResultRepositories;
+import it.polimi.Game.Persistence.GameResultRepository;
+import it.polimi.Game.Persistence.LeaderboardFormatter;
 import it.polimi.Network.Common.ActionMessage;
 import it.polimi.Network.Common.SerializedUpdate;
 import it.polimi.Network.Server.View.VirtualView;
@@ -107,11 +110,16 @@ public class ClientHandler implements Runnable, ClientConnection {
     private void processAction(ActionMessage action) {
         this.lastActivity = System.currentTimeMillis();
 
-        if ("HEARTBEAT".equals(action.getType())) {
+        String type = action.getType() == null ? "" : action.getType();
+        if ("HEARTBEAT".equals(type)) {
             return; // Heartbeat handled: activity updated, no further action needed.
         }
 
         if (!loggedIn) {
+            if ("LEADERBOARD".equalsIgnoreCase(type) || type.toLowerCase().startsWith("leaderboard")) {
+                virtualView.showMessage(queryGlobalLeaderboard(action));
+                return;
+            }
             handleLogin(action);
         } else {
             // Forward other actions to the room's GameController
@@ -134,11 +142,21 @@ public class ClientHandler implements Runnable, ClientConnection {
             if (isSuccessfulLobbyEvent(cmd, response)) {
                 lobby.broadcastToRoomExcept(room.getRoomId(), nickname, "NOTIFICATION", response);
             }
-            if (!cmd.startsWith("help") && !cmd.startsWith("hand") && !cmd.startsWith("stats") && !cmd.startsWith("quit")
+            if (!cmd.startsWith("help") && !cmd.startsWith("hint") && !cmd.startsWith("hand")
+                    && !cmd.startsWith("stats") && !cmd.startsWith("quit")
                     && !response.startsWith("Unknown command:")) {
                 lobby.broadcastToRoom(room.getRoomId(), "STATUS_UPDATE", controller.statusSnapshot());
             }
         }
+    }
+
+    private String queryGlobalLeaderboard(ActionMessage action) {
+        int playerCount = action == null ? 0 : action.getValue();
+        if (playerCount < 2 || playerCount > 5) {
+            return "Player count must be between 2 and 5.";
+        }
+        GameResultRepository repository = GameResultRepositories.fromEnvironment();
+        return LeaderboardFormatter.format(repository.getLeaderboardByPlayerCount(playerCount), playerCount);
     }
 
     /**

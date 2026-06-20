@@ -47,7 +47,9 @@ public class Event_Most_Ritual extends Building{
     public void applyRitualEffect(Player player, RitualData ritualData, ShamanicRitual ritual) {
         // If the owner has the most stars, they gain multiplied points.
         if (ritualData.getStar(player) == ritualData.getMaxStar()){
-            player.modifyPrestigePoints(multiplier * ritual.getMaxPoints());
+            // The event already awarded its normal value. Add only the amount
+            // needed to bring that value up to the building's multiplier.
+            player.modifyPrestigePoints(Math.max(0, multiplier - 1) * ritual.getMaxPoints());
             // multiplier
         }
     }

@@ -35,6 +35,7 @@ final class ConsoleTuiRenderer {
     private volatile boolean forceNextStatusRender = false;
     private volatile String pendingCommand;
     private boolean promptVisible;
+    private boolean preGameReadyHintShown;
     private String localNickname;
     private String lastStatusContent;
     private final Map<String, List<Integer>> takenCardsByPlayer = new HashMap<>();
@@ -89,6 +90,8 @@ final class ConsoleTuiRenderer {
             out.println("--- Mesos TUI Help ---");
             out.println("help");
             out.println("  Shows this command reference.");
+            out.println("hint");
+            out.println("  Suggests what to do next or shows which player you are waiting for.");
             out.println("ready");
             out.println("  Marks you ready in the lobby.");
             out.println("unready");
@@ -107,6 +110,8 @@ final class ConsoleTuiRenderer {
             out.println("  Requests another player's character and building cards from the server.");
             out.println("player");
             out.println("  Shows the nickname of the logged-in player.");
+            out.println("lobby");
+            out.println("  Leaves the current match and returns to the gateway menu.");
             out.println("totem <letter>");
             out.println("  Places your totem on an offer tile. Example: totem A.");
             out.println("pick <upper|lower> <t|b> <index>");
@@ -165,7 +170,16 @@ final class ConsoleTuiRenderer {
                         lastStatusContent = content;
                         updateTakenCardsFromStatus(content);
                         String summary = buildStatusSummary(visibleContent);
-                        if (forceNextStatusRender || !isLobbyStatusSnapshot(content)) {
+                        boolean lobbyStatus = isLobbyStatusSnapshot(content);
+                        if (lobbyStatus && !preGameReadyHintShown) {
+                            preGameReadyHintShown = true;
+                            if (!forceNextStatusRender) {
+                                prepareUpdateLineLocked();
+                                out.println("Hint: use 'ready' when you are ready to start.");
+                                showPrompt = true;
+                            }
+                        }
+                        if (forceNextStatusRender || !lobbyStatus) {
                             prepareUpdateLineLocked();
                             out.println(summary);
                             showPrompt = true;

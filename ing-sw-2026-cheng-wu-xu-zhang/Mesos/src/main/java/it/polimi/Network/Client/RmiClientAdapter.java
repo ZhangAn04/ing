@@ -51,32 +51,49 @@ public class RmiClientAdapter {
      */
     public void start(String host, int rmiPort, String bindingName, InputStream commandInput) {
         ClientCallback callback = null;
+        GameServiceRemote service = null;
         try (BufferedReader stdIn = new BufferedReader(new InputStreamReader(commandInput))) {
             Registry registry = LocateRegistry.getRegistry(host, rmiPort);
-            GameServiceRemote service = (GameServiceRemote) registry.lookup(bindingName);
+            service = (GameServiceRemote) registry.lookup(bindingName);
+            GameServiceRemote activeService = service;
 
             callback = new ClientCallback(tuiRenderer);
             ClientCallbackRemote stub = (ClientCallbackRemote) UnicastRemoteObject.exportObject(callback, 0);
 
             tuiRenderer.printLine("Connected to RMI registry " + host + ":" + rmiPort + " (service: " + bindingName + ")");
 
-            RmiLoginRequest request = handleGatewayMenu(stdIn, tuiRenderer);
-            if (request == null) return;
-            
-            nickname = request.getNickname();
-            tuiRenderer.setLocalNickname(nickname);
-            RmiLoginResponse loginResponse = service.login(request, stub);
-            tuiRenderer.printLine(loginResponse.getMessage());
+            heartbeatExecutor.scheduleAtFixedRate(() -> {
+                String currentNickname = nickname;
+                if (currentNickname == null) return;
+                try {
+                    activeService.heartbeat(currentNickname);
+                } catch (Exception e) {
+                    heartbeatExecutor.shutdown();
+                }
+            }, 10, 10, TimeUnit.SECONDS);
 
-            if (loginResponse.isSuccess()) {
-                heartbeatExecutor.scheduleAtFixedRate(() -> {
-                    try { service.heartbeat(nickname); } catch (Exception e) { heartbeatExecutor.shutdown(); }
-                }, 10, 10, TimeUnit.SECONDS);
+            boolean returnToGateway;
+            do {
+                RmiLoginResponse loginResponse;
+                while (true) {
+                    RmiLoginRequest request = handleGatewayMenu(stdIn, tuiRenderer);
+                    if (request == null) return;
 
+                    nickname = request.getNickname();
+                    tuiRenderer.setLocalNickname(nickname);
+                    loginResponse = service.login(request, stub);
+                    tuiRenderer.printLine(loginResponse.getMessage());
+                    if (loginResponse.isSuccess()) {
+                        break;
+                    }
+                    nickname = null;
+                    tuiRenderer.printLine("Returning to the gateway menu.");
+                }
+
+                returnToGateway = false;
                 String line;
                 tuiRenderer.printLine("Type 'help' to show available commands.");
                 tuiRenderer.printLine("Hint: use 'status' to view the current lobby information.");
-                tuiRenderer.printLine("Hint: use 'ready' when you are ready to start.");
                 tuiRenderer.renderPrompt();
                 while ((line = stdIn.readLine()) != null) {
                     String command = line.trim();
@@ -92,6 +109,13 @@ public class RmiClientAdapter {
                         tuiRenderer.renderPlayerIdentity();
                         continue;
                     }
+                    if ("lobby".equalsIgnoreCase(command)) {
+                        service.disconnect(nickname);
+                        nickname = null;
+                        tuiRenderer.printLine("Leaving the current match. Returning to the gateway menu.");
+                        returnToGateway = true;
+                        break;
+                    }
                     if (isRestrictedTuiCommand(command)) {
                         tuiRenderer.printLine("This command is not available in the TUI. Use the GUI controls instead.");
                         tuiRenderer.renderPrompt();
@@ -106,10 +130,14 @@ public class RmiClientAdapter {
                     if (response != null) tuiRenderer.renderServerUpdate(response);
                     if ("quit".equalsIgnoreCase(command)) break;
                 }
-            }
+            } while (returnToGateway);
         } catch (Exception e) {
             System.err.println("Error: Could not connect to the RMI server.");
         } finally {
+            if (service != null && nickname != null) {
+                try { service.disconnect(nickname); } catch (Exception ignored) {}
+            }
+            nickname = null;
             heartbeatExecutor.shutdownNow();
             if (callback != null) {
                 try { UnicastRemoteObject.unexportObject(callback, true); } catch (Exception ignored) {}
@@ -154,7 +182,7 @@ public class RmiClientAdapter {
             try { roomId = Integer.parseInt(roomIdStr.trim()); } 
             catch (NumberFormatException e) { tuiRenderer.printLine("Invalid ID."); continue; }
 
-            System.out.print("Enter secret PIN: ");
+            System.out.print("Enter Personal PIN: ");
             String pin = stdIn.readLine();
             if (pin == null) return null;
             pin = pin.trim();

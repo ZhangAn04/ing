@@ -12,6 +12,7 @@ import it.polimi.Constants.Position;
  * The effect typically depends on the player's order or position in the current turn.
  */
 public class Turn_Start_Effect extends Building {
+    private final int foodBonus;
 
     /**
      * Constructs a Turn_Start_Effect building with the specified properties.
@@ -21,14 +22,30 @@ public class Turn_Start_Effect extends Building {
      * @param cost the resource cost to build
      * @param points the prestige points awarded by the building
      */
-    @JsonCreator
     public Turn_Start_Effect(
           @JsonProperty("era") Era era,
           @JsonProperty("position") Position position,
           @JsonProperty("cost") int cost,
           @JsonProperty("points") int points) {
 
+        this(era, position, cost, points, 1);
+    }
+
+    @JsonCreator
+    public Turn_Start_Effect(
+          @JsonProperty("era") Era era,
+          @JsonProperty("position") Position position,
+          @JsonProperty("cost") int cost,
+          @JsonProperty("points") int points,
+          @JsonProperty("food") int foodBonus) {
+
         super(era, position, cost, points);
+        this.foodBonus = foodBonus;
+    }
+
+    /** Returns the food gained when the owner returns to the turn-order track. */
+    public int getFoodBonus() {
+        return foodBonus;
     }
 
     /**

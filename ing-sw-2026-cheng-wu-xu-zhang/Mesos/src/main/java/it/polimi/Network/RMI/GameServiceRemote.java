@@ -29,6 +29,15 @@ public interface GameServiceRemote extends Remote {
     SerializedUpdate sendAction(ActionMessage action) throws RemoteException;
 
     /**
+     * Reads the persistent leaderboard without joining a game room.
+     *
+     * @param playerCount number of players in the matches to rank.
+     * @return leaderboard response.
+     * @throws RemoteException if the remote call fails.
+     */
+    SerializedUpdate getLeaderboard(int playerCount) throws RemoteException;
+
+    /**
      * Marks activity for an already connected player.
      *
      * @param nickname player nickname.

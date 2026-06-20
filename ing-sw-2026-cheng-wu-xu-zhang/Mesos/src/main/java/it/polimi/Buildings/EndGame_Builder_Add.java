@@ -11,13 +11,14 @@ import it.polimi.Constants.*;
 import it.polimi.Constants.Position;
 
 /**
- * End-game building that multiplies points contributed by builder characters.
- * The final bonus is proportional to the number of Builder-type characters owned by the player.
+ * End-game building that either multiplies Builder prestige or awards fixed points per Builder.
  */
 public class EndGame_Builder_Add extends Building {
 
-    /** The multiplier value applied to the total builder points. */
+    /** The multiplier applied to normal Builder prestige; zero for fixed-point cards. */
     private int multiplier;
+    /** Fixed points awarded for every Builder, used by cards with a numeric reward. */
+    private int pointsPerBuilder;
 
     /**
      * Creates the builder multiplier end-game building.
@@ -28,7 +29,6 @@ public class EndGame_Builder_Add extends Building {
      * @param points The base points granted.
      * @param multiplier The scoring multiplier for builders.
      */
-    @JsonCreator
     public EndGame_Builder_Add(
             @JsonProperty("era") Era era,
             @JsonProperty("position") Position position,
@@ -36,8 +36,21 @@ public class EndGame_Builder_Add extends Building {
             @JsonProperty("points") int points,
             @JsonProperty("multiplier") int multiplier) {
 
+        this(era, position, cost, points, multiplier, 0);
+    }
+
+    @JsonCreator
+    public EndGame_Builder_Add(
+            @JsonProperty("era") Era era,
+            @JsonProperty("position") Position position,
+            @JsonProperty("cost") int cost,
+            @JsonProperty("points") int points,
+            @JsonProperty("multiplier") int multiplier,
+            @JsonProperty("pointsPerBuilder") int pointsPerBuilder) {
+
         super(era, position, cost, points);
         this.multiplier = multiplier;
+        this.pointsPerBuilder = pointsPerBuilder;
     }
 
     /**
@@ -48,14 +61,22 @@ public class EndGame_Builder_Add extends Building {
      */
     public int calculateFinalPoints(Player g) {
 
-        int total = 0;
+        int totalPrestige = 0;
+        int builderCount = 0;
 
         for (Character character : g.getCharacters()) {
             if (character.getType() == CharacterType.BUILDER) {
-                total += character.getPrestigePoints();
+                builderCount++;
+                totalPrestige += character.getPrestigePoints();
             }
         }
 
-        return total * multiplier;
+        if (pointsPerBuilder > 0) {
+            return builderCount * pointsPerBuilder;
+        }
+
+        // Normal Builder prestige is scored separately by GameController.
+        // Return only the extra amount needed to reach the requested multiplier.
+        return totalPrestige * Math.max(0, multiplier - 1);
     }
 }
