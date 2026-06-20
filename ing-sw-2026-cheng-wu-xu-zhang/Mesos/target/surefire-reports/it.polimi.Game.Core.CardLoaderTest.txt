@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: it.polimi.Game.Core.CardLoaderTest
--------------------------------------------------------------------------------
-Tests run: 15, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.227 s -- in it.polimi.Game.Core.CardLoaderTest
