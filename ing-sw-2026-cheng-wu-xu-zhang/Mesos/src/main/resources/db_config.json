@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "host": "47.98.186.186",
+  "port": 3306,
+  "db": "GC19_Mesos_DB",
+  "user": "mesos",
+  "password": "PASS",
+  "adminUser": "root",
+  "adminPassword": "Woshinibaba88!",
+  "table": "mesos_game_scores",
+  "autoCreate": true,
+  "connectTimeoutMs": 10000,
+  "socketTimeoutMs": 30000
+}

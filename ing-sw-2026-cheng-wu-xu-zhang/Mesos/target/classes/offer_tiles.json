@@ -1,0 +1,60 @@
+{
+  "offerTiles": [
+    {
+      "letter": "A",
+      "minPlayers": 5,
+      "numUpperCards": 0,
+      "numLowerCards": 0,
+      "foodBonus": 3,
+      "id": "a"
+    },
+    {
+      "letter": "B",
+      "minPlayers": 2,
+      "numUpperCards": 0,
+      "numLowerCards": 1,
+      "foodBonus": 0,
+      "id": "b"
+    },
+    {
+      "letter": "C",
+      "minPlayers": 2,
+      "numUpperCards": 1,
+      "numLowerCards": 0,
+      "foodBonus": 0,
+      "id": "c"
+    },
+    {
+      "letter": "D",
+      "minPlayers": 3,
+      "numUpperCards": 0,
+      "numLowerCards": 2,
+      "foodBonus": 0,
+      "id": "d"
+    },
+    {
+      "letter": "E",
+      "minPlayers": 2,
+      "numUpperCards": 1,
+      "numLowerCards": 1,
+      "foodBonus": 0,
+      "id": "e"
+    },
+    {
+      "letter": "F",
+      "minPlayers": 2,
+      "numUpperCards": 2,
+      "numLowerCards": 0,
+      "foodBonus": 0,
+      "id": "f"
+    },
+    {
+      "letter": "G",
+      "minPlayers": 4,
+      "numUpperCards": 2,
+      "numLowerCards": 1,
+      "foodBonus": 0,
+      "id": "g"
+    }
+  ]
+}
