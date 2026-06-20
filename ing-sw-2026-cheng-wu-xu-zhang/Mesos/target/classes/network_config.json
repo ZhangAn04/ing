@@ -1,0 +1,7 @@
+{
+  "defaultHost": "127.0.0.1",
+  "defaultPort": 9999,
+  "defaultProtocol": "socket",
+  "defaultRmiPort": 1099,
+  "defaultRmiBindingName": "MesosGameService"
+}

@@ -1,0 +1,35 @@
+{
+  "players": [
+    {
+      "id": "2p",
+      "p1-food": "1",
+      "p2-food": "-1",
+      "p2-points": "-2"
+
+    },
+    {
+      "id": "3p",
+      "p1-food": "2",
+      "p3-food": "-1",
+      "p3-points": "-2"
+
+    },
+    {
+      "id": "4p",
+      "p1-food": "2",
+      "p2-food": "1",
+      "p4-food": "-1",
+      "p4-points": "-2"
+
+    },
+    {
+      "id": "5p",
+      "p1-food": "3",
+      "p2-food": "1",
+      "p5-food": "-1",
+      "p5-points": "-2"
+    }
+
+
+  ]
+}

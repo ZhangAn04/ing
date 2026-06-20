@@ -1,0 +1,17 @@
+it.polimi.Abstract
+it.polimi.Buildings
+it.polimi.Buildings.Ritual
+it.polimi.Characters
+it.polimi.Constants
+it.polimi.Events
+it.polimi.Game.Core
+it.polimi.Game.Elements
+it.polimi.Game.Persistence
+it.polimi.Network.Client
+it.polimi.Network.Common
+it.polimi.Network.Config
+it.polimi.Network.RMI
+it.polimi.Network.Server
+it.polimi.Network.Server.RMI
+it.polimi.Network.Server.View
+it.polimi.Network.Tools
